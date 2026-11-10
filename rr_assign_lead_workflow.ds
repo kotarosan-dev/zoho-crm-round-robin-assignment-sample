@@ -1,0 +1,10 @@
+// Sanitized copy for publication: connection name, API data-center domain
+// and user/record IDs in the original were replaced with placeholders.
+// See README.md (Configuration) before use.
+// RR workflow wrapper (Automation function, argument: String leadId)
+// Attach to the Leads create workflow rule.
+void automation.rr_assign_lead_workflow(String leadId)
+{
+	res = standalone.rr_engine(leadId,"Create_Workflow");
+	info "rr_assign_lead_workflow lead=" + leadId + " result=" + res;
+}

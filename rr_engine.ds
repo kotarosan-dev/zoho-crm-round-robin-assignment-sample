@@ -1,0 +1,721 @@
+// Sanitized copy for publication: connection name, API data-center domain
+// and user/record IDs in the original were replaced with placeholders.
+// See README.md (Configuration) before use.
+// RR Engine (standalone) - round robin assignment core.
+// Called by the create workflow wrapper and the reassign button wrapper.
+// Placeholders RR_Pools etc. are replaced with real module API names
+// after setup stage 2 confirms them.
+string standalone.rr_engine(String leadId, String source)
+{
+	conn = "your_connection";
+	api = "https://www.zohoapis.com/crm/v8";
+	modPools = "RR_Pools";
+	modMembers = "RR_Members";
+	modState = "RR_State";
+	modLogs = "RR_Assignment_Logs";
+	// Corrected evaluation time: zoho.currenttime returns a US Pacific
+	// wall clock (measured 2026-11-09: JST minus 17h). Shift by the US
+	// DST rule computed on the raw wall-clock date.
+	rawNow = zoho.currenttime;
+	y = rawNow.getYear();
+	m = rawNow.getMonth();
+	d = rawNow.getDay();
+	firstMar = (y + "-03-01").toDate();
+	offMar = (8 - firstMar.getDayOfWeek()) % 7;
+	dstStartDay = 1 + offMar + 7;
+	firstNov = (y + "-11-01").toDate();
+	offNov = (8 - firstNov.getDayOfWeek()) % 7;
+	dstEndDay = 1 + offNov;
+	isDst = false;
+	if(m > 3 && m < 11)
+	{
+		isDst = true;
+	}
+	if(m == 3 && d >= dstStartDay)
+	{
+		isDst = true;
+	}
+	if(m == 11 && d < dstEndDay)
+	{
+		isDst = true;
+	}
+	shiftH = 17;
+	if(isDst)
+	{
+		shiftH = 16;
+	}
+	evalNow = rawNow.addHour(shiftH);
+	evalDate = evalNow.toString("yyyy-MM-dd");
+	evalDateNum = evalDate.replaceAll("-","").toLong();
+	evalMinutes = evalNow.toString("HH:mm").subString(0,2).toLong() * 60 + evalNow.toString("HH:mm").subString(3,5).toLong();
+	nowIso = evalDate + "T" + evalNow.toString("HH:mm:ss") + "+09:00";
+	rawDay = evalNow.toString("EEEE");
+	dayEn = "";
+	if(rawDay == "Monday" || rawDay == "月曜日")
+	{
+		dayEn = "Monday";
+	}
+	if(rawDay == "Tuesday" || rawDay == "火曜日")
+	{
+		dayEn = "Tuesday";
+	}
+	if(rawDay == "Wednesday" || rawDay == "水曜日")
+	{
+		dayEn = "Wednesday";
+	}
+	if(rawDay == "Thursday" || rawDay == "木曜日")
+	{
+		dayEn = "Thursday";
+	}
+	if(rawDay == "Friday" || rawDay == "金曜日")
+	{
+		dayEn = "Friday";
+	}
+	if(rawDay == "Saturday" || rawDay == "土曜日")
+	{
+		dayEn = "Saturday";
+	}
+	if(rawDay == "Sunday" || rawDay == "日曜日")
+	{
+		dayEn = "Sunday";
+	}
+	opId = "rr" + rawNow.toLong().toString() + "-" + leadId;
+	info "ENGINE start lead=" + leadId + " source=" + source + " evalNow=" + nowIso + " day=" + dayEn;
+	// 1. Fetch lead
+	getResp = invokeurl
+	[
+		url :api + "/Leads/" + leadId
+		type :GET
+		connection:"your_connection"
+	];
+	if(getResp == null || getResp.get("data") == null)
+	{
+		info "ENGINE lead fetch failed";
+		return "LEAD_FETCH_FAILED";
+	}
+	lead = getResp.get("data").get(0);
+	leadMod = lead.get("Modified_Time").toString();
+	leadStatus = ifnull(lead.get("RR_Assignment_Status"),"");
+	// 2. Idempotency: already assigned on the create path
+	if(source == "Create_Workflow" && (leadStatus == "Assigned" || leadStatus == "Fallback"))
+	{
+		logMap = Map();
+		logMap.put("Lead",leadId);
+		logMap.put("Result","Skipped_AlreadyAssigned");
+		logMap.put("Source",source);
+		logMap.put("Executed_At",nowIso);
+		zoho.crm.createRecord(modLogs,logMap);
+		return "SKIPPED_ALREADY_ASSIGNED";
+	}
+	// 3. Claim the lead record itself (conditional update)
+	claimRow = Map();
+	claimRow.put("RR_Assignment_Status","Processing");
+	claimRow.put("RR_Operation_Id",opId);
+	claimRows = List();
+	claimRows.add(claimRow);
+	claimBody = Map();
+	claimBody.put("data",claimRows);
+	claimBody.put("trigger",List());
+	claimHdr = Map();
+	claimHdr.put("If-Unmodified-Since",leadMod);
+	claimResp = invokeurl
+	[
+		url :api + "/Leads/" + leadId
+		type :PUT
+		parameters:claimBody.toString()
+		headers:claimHdr
+		connection:"your_connection"
+	];
+	claimCode = "";
+	if(claimResp != null && claimResp.get("data") != null)
+	{
+		claimCode = ifnull(claimResp.get("data").get(0).get("code"),"");
+	}
+	if(claimResp != null && claimResp.get("code") != null)
+	{
+		claimCode = claimResp.get("code");
+	}
+	if(claimCode != "SUCCESS")
+	{
+		if(claimCode == "ALREADY_MODIFIED")
+		{
+			logMap2 = Map();
+			logMap2.put("Lead",leadId);
+			logMap2.put("Result","Skipped_RecordBusy");
+			logMap2.put("Source",source);
+			logMap2.put("Operation_Id",opId);
+			logMap2.put("Executed_At",nowIso);
+			zoho.crm.createRecord(modLogs,logMap2);
+			return "SKIPPED_RECORD_BUSY";
+		}
+		info "ENGINE claim failed code=" + claimCode;
+		return "CLAIM_FAILED_" + claimCode;
+	}
+	leadMod = claimResp.get("data").get(0).get("details").get("Modified_Time").toString();
+	// 4. Select pool
+	poolQuery = "select id, Pool_Key, Match_Field_API_Name, Match_Value, Priority, Fallback_User_Id, Is_Default from " + modPools + " where Active = true order by Priority asc, Pool_Key asc";
+	poolQMap = Map();
+	poolQMap.put("select_query",poolQuery);
+	poolResp = invokeurl
+	[
+		url :api + "/coql"
+		type :POST
+		parameters:poolQMap.toString()
+		connection:"your_connection"
+	];
+	pool = null;
+	defaultPool = null;
+	if(poolResp != null && poolResp.toString() != "" && poolResp.get("data") != null)
+	{
+		for each prow in poolResp.get("data")
+		{
+			if(ifnull(prow.get("Is_Default"),false) == true)
+			{
+				if(defaultPool == null)
+				{
+					defaultPool = prow;
+				}
+			}
+			else if(pool == null)
+			{
+				matchField = ifnull(prow.get("Match_Field_API_Name"),"");
+				matchValue = ifnull(prow.get("Match_Value"),"");
+				leadVal = "";
+				if(matchField != "")
+				{
+					leadVal = ifnull(lead.get(matchField),"").toString();
+				}
+				if(matchField != "" && leadVal == matchValue)
+				{
+					pool = prow;
+				}
+			}
+		}
+	}
+	if(pool == null)
+	{
+		pool = defaultPool;
+	}
+	if(pool == null)
+	{
+		npRow = Map();
+		npRow.put("RR_Assignment_Status","Unassigned");
+		npRow.put("RR_Operation_Id",opId);
+		npRows = List();
+		npRows.add(npRow);
+		npBody = Map();
+		npBody.put("data",npRows);
+		npBody.put("trigger",List());
+		npHdr = Map();
+		npHdr.put("If-Unmodified-Since",leadMod);
+		invokeurl
+		[
+			url :api + "/Leads/" + leadId
+			type :PUT
+			parameters:npBody.toString()
+			headers:npHdr
+			connection:"your_connection"
+		];
+		logMap3 = Map();
+		logMap3.put("Lead",leadId);
+		logMap3.put("Result","Unassigned_NoPool");
+		logMap3.put("Source",source);
+		logMap3.put("Operation_Id",opId);
+		logMap3.put("Executed_At",nowIso);
+		zoho.crm.createRecord(modLogs,logMap3);
+		return "UNASSIGNED_NO_POOL";
+	}
+	poolId = pool.get("id").toString();
+	poolKey = ifnull(pool.get("Pool_Key"),"");
+	fallbackUser = ifnull(pool.get("Fallback_User_Id"),"").toString();
+	// 5. Members of the pool
+	memQuery = "select id, User_Id, Sequence, Active, Accepting_New, Work_Days, Shift_Start, Shift_End, Absence_From, Absence_To, Daily_Cap from " + modMembers + " where Pool = '" + poolId + "' order by Sequence asc limit 51";
+	memQMap = Map();
+	memQMap.put("select_query",memQuery);
+	memResp = invokeurl
+	[
+		url :api + "/coql"
+		type :POST
+		parameters:memQMap.toString()
+		connection:"your_connection"
+	];
+	members = List();
+	if(memResp != null && memResp.toString() != "" && memResp.get("data") != null)
+	{
+		members = memResp.get("data");
+	}
+	if(members.size() > 50 || members.size() == 0)
+	{
+		logMap4 = Map();
+		logMap4.put("Lead",leadId);
+		logMap4.put("Pool",poolId);
+		logMap4.put("Pool_Key",poolKey);
+		logMap4.put("Result","Config_Error");
+		logMap4.put("Source",source);
+		logMap4.put("Operation_Id",opId);
+		logMap4.put("Executed_At",nowIso);
+		logMap4.put("Error_Message","member count=" + members.size().toString());
+		zoho.crm.createRecord(modLogs,logMap4);
+		return "CONFIG_ERROR_MEMBERS";
+	}
+	// 5b. Duplicate Sequence values are a configuration error (TC-20)
+	seqSeen = Map();
+	dupSeq = "";
+	for each mrowD in members
+	{
+		skey = mrowD.get("Sequence").toString();
+		if(seqSeen.containKey(skey))
+		{
+			dupSeq = skey;
+		}
+		seqSeen.put(skey,true);
+	}
+	if(dupSeq != "")
+	{
+		logMap4b = Map();
+		logMap4b.put("Lead",leadId);
+		logMap4b.put("Pool",poolId);
+		logMap4b.put("Pool_Key",poolKey);
+		logMap4b.put("Result","Config_Error");
+		logMap4b.put("Source",source);
+		logMap4b.put("Operation_Id",opId);
+		logMap4b.put("Executed_At",nowIso);
+		logMap4b.put("Error_Message","duplicate Sequence=" + dupSeq);
+		zoho.crm.createRecord(modLogs,logMap4b);
+		return "CONFIG_ERROR_DUPSEQ";
+	}
+	// 6. Valid CRM users
+	usersResp = invokeurl
+	[
+		url :api + "/users?type=AllUsers"
+		type :GET
+		connection:"your_connection"
+	];
+	validUsers = List();
+	if(usersResp != null && usersResp.get("users") != null)
+	{
+		for each u in usersResp.get("users")
+		{
+			if(ifnull(u.get("status"),"") == "active" && ifnull(u.get("confirm"),false) == true)
+			{
+				validUsers.add(u.get("id").toString());
+			}
+		}
+	}
+	info "ENGINE pool=" + poolKey + " members=" + members.size().toString() + " validUsers=" + validUsers.size().toString();
+	// 7. State row (must be exactly one, pre-created by setup)
+	stQuery = "select id, Last_Sequence, Total_Claimed, Total_Assigned, Modified_Time from " + modState + " where Pool = '" + poolId + "' limit 5";
+	stQMap = Map();
+	stQMap.put("select_query",stQuery);
+	stResp = invokeurl
+	[
+		url :api + "/coql"
+		type :POST
+		parameters:stQMap.toString()
+		connection:"your_connection"
+	];
+	stRows = List();
+	if(stResp != null && stResp.toString() != "" && stResp.get("data") != null)
+	{
+		stRows = stResp.get("data");
+	}
+	if(stRows.size() != 1)
+	{
+		logMap5 = Map();
+		logMap5.put("Lead",leadId);
+		logMap5.put("Pool",poolId);
+		logMap5.put("Pool_Key",poolKey);
+		logMap5.put("Result","Config_Error");
+		logMap5.put("Source",source);
+		logMap5.put("Operation_Id",opId);
+		logMap5.put("Executed_At",nowIso);
+		logMap5.put("Error_Message","state rows=" + stRows.size().toString());
+		zoho.crm.createRecord(modLogs,logMap5);
+		return "CONFIG_ERROR_STATE";
+	}
+	stateRow = stRows.get(0);
+	stateId = stateRow.get("id").toString();
+	stateMod = stateRow.get("Modified_Time").toString();
+	lastSeq = ifnull(stateRow.get("Last_Sequence"),0).toLong();
+	totalClaimed = ifnull(stateRow.get("Total_Claimed"),0).toLong();
+	totalAssigned = ifnull(stateRow.get("Total_Assigned"),0).toLong();
+	// 8. Today's assignment counts per user (create path only)
+	todayStart = evalDate + "T00:00:00+09:00";
+	tomorrowDate = evalNow.addDay(1).toString("yyyy-MM-dd");
+	todayEnd = tomorrowDate + "T00:00:00+09:00";
+	cntQuery = "select Assigned_User_Id from " + modLogs + " where ((Executed_At >= '" + todayStart + "' and Executed_At < '" + todayEnd + "') and Result = 'Assigned') and Source = 'Create_Workflow' limit 2000";
+	cntQMap = Map();
+	cntQMap.put("select_query",cntQuery);
+	cntResp = invokeurl
+	[
+		url :api + "/coql"
+		type :POST
+		parameters:cntQMap.toString()
+		connection:"your_connection"
+	];
+	counts = Map();
+	if(cntResp != null && cntResp.toString() != "" && cntResp.get("data") != null)
+	{
+		for each crow in cntResp.get("data")
+		{
+			au = crow.get("Assigned_User_Id");
+			if(au != null)
+			{
+				auId = au.get("id").toString();
+				counts.put(auId,ifnull(counts.get(auId),0).toLong() + 1);
+			}
+		}
+	}
+	// 9. Claim loop (max 3 attempts)
+	candidate = null;
+	candSeq = 0;
+	snapshot = "";
+	claimed = false;
+	attempts = {1,2,3};
+	for each attempt in attempts
+	{
+		if(claimed)
+		{
+			break;
+		}
+		// Evaluate members in rotation order starting after lastSeq
+		ordered = List();
+		for each mm in members
+		{
+			if(mm.get("Sequence").toLong() > lastSeq)
+			{
+				ordered.add(mm);
+			}
+		}
+		for each mm2 in members
+		{
+			if(mm2.get("Sequence").toLong() <= lastSeq)
+			{
+				ordered.add(mm2);
+			}
+		}
+		candidate = null;
+		snapParts = List();
+		for each mem in ordered
+		{
+			seq = mem.get("Sequence").toLong();
+			uid = ifnull(mem.get("User_Id"),"").toString();
+			// User_Id may come back as a lookup map
+			if(mem.get("User_Id") != null && mem.get("User_Id").toString().contains("{"))
+			{
+				uid = mem.get("User_Id").get("id").toString();
+			}
+			reason = "OK";
+			if(ifnull(mem.get("Active"),false) != true)
+			{
+				reason = "Inactive";
+			}
+			else if(!validUsers.contains(uid))
+			{
+				reason = "UserInvalid";
+			}
+			else if(ifnull(mem.get("Accepting_New"),true) != true)
+			{
+				reason = "NotAccepting";
+			}
+			else if(mem.get("Work_Days") != null && mem.get("Work_Days").size() > 0 && !mem.get("Work_Days").contains(dayEn))
+			{
+				reason = "DayOff";
+			}
+			else if(mem.get("Absence_From") != null && mem.get("Absence_To") != null && evalDateNum >= mem.get("Absence_From").toString().replaceAll("-","").toLong() && evalDateNum <= mem.get("Absence_To").toString().replaceAll("-","").toLong())
+			{
+				reason = "Absence";
+			}
+			else if(mem.get("Shift_Start") != null && mem.get("Shift_End") != null)
+			{
+				sMin = mem.get("Shift_Start").toString().subString(0,2).toLong() * 60 + mem.get("Shift_Start").toString().subString(3,5).toLong();
+				eMin = mem.get("Shift_End").toString().subString(0,2).toLong() * 60 + mem.get("Shift_End").toString().subString(3,5).toLong();
+				if(evalMinutes < sMin || evalMinutes >= eMin)
+				{
+					reason = "Shift";
+				}
+			}
+			if(reason == "OK" && mem.get("Daily_Cap") != null)
+			{
+				if(ifnull(counts.get(uid),0).toLong() >= mem.get("Daily_Cap").toLong())
+				{
+					reason = "Cap";
+				}
+			}
+			snapParts.add(seq.toString() + ":" + reason);
+			if(reason == "OK" && candidate == null)
+			{
+				candidate = mem;
+				candSeq = seq;
+				candUser = uid;
+			}
+		}
+		snapshot = snapParts.toString();
+		if(candidate == null)
+		{
+			break;
+		}
+		// Claim the pointer conditionally
+		stRowUpd = Map();
+		stRowUpd.put("Last_Sequence",candSeq);
+		stRowUpd.put("Last_Assigned_User_Id",candUser);
+		stRowUpd.put("Last_Assigned_At",nowIso);
+		stRowUpd.put("Total_Claimed",totalClaimed + 1);
+		stRowsUpd = List();
+		stRowsUpd.add(stRowUpd);
+		stBody = Map();
+		stBody.put("data",stRowsUpd);
+		stBody.put("trigger",List());
+		stHdr = Map();
+		stHdr.put("If-Unmodified-Since",stateMod);
+		stPut = invokeurl
+		[
+			url :api + "/" + modState + "/" + stateId
+			type :PUT
+			parameters:stBody.toString()
+			headers:stHdr
+			connection:"your_connection"
+		];
+		stCode = "";
+		if(stPut != null && stPut.get("data") != null)
+		{
+			stCode = ifnull(stPut.get("data").get(0).get("code"),"");
+		}
+		if(stPut != null && stPut.get("code") != null)
+		{
+			stCode = stPut.get("code");
+		}
+		if(stCode == "SUCCESS")
+		{
+			claimed = true;
+			stateMod = stPut.get("data").get(0).get("details").get("Modified_Time").toString();
+			totalClaimed = totalClaimed + 1;
+		}
+		else if(stCode == "ALREADY_MODIFIED" && attempt < 3)
+		{
+			stResp2 = invokeurl
+			[
+				url :api + "/coql"
+				type :POST
+				parameters:stQMap.toString()
+				connection:"your_connection"
+			];
+			if(stResp2 != null && stResp2.toString() != "" && stResp2.get("data") != null && stResp2.get("data").size() == 1)
+			{
+				stateRow = stResp2.get("data").get(0);
+				stateMod = stateRow.get("Modified_Time").toString();
+				lastSeq = ifnull(stateRow.get("Last_Sequence"),0).toLong();
+				totalClaimed = ifnull(stateRow.get("Total_Claimed"),0).toLong();
+				totalAssigned = ifnull(stateRow.get("Total_Assigned"),0).toLong();
+			}
+		}
+		else
+		{
+			logMap6 = Map();
+			logMap6.put("Lead",leadId);
+			logMap6.put("Pool",poolId);
+			logMap6.put("Pool_Key",poolKey);
+			logMap6.put("Result","Failed_StateUpdate");
+			logMap6.put("Source",source);
+			logMap6.put("Operation_Id",opId);
+			logMap6.put("Executed_At",nowIso);
+			logMap6.put("Members_Snapshot",snapshot);
+			logMap6.put("Error_Message","state claim code=" + stCode + " attempt=" + attempt.toString());
+			zoho.crm.createRecord(modLogs,logMap6);
+			return "FAILED_STATE_UPDATE";
+		}
+	}
+	// 10. No eligible member: fallback or unassigned
+	if(!claimed || candidate == null)
+	{
+		if(fallbackUser != "" && validUsers.contains(fallbackUser))
+		{
+			fbRow = Map();
+			fbOwner = Map();
+			fbOwner.put("id",fallbackUser);
+			fbRow.put("Owner",fbOwner);
+			fbRow.put("RR_Assignment_Status","Fallback");
+			fbRow.put("RR_Pool_Key",poolKey);
+			fbRow.put("RR_Last_Assigned_At",nowIso);
+			fbRow.put("RR_Operation_Id",opId);
+			fbRows = List();
+			fbRows.add(fbRow);
+			fbBody = Map();
+			fbBody.put("data",fbRows);
+			fbBody.put("trigger",List());
+			fbHdr = Map();
+			fbHdr.put("If-Unmodified-Since",leadMod);
+			fbPut = invokeurl
+			[
+				url :api + "/Leads/" + leadId
+				type :PUT
+				parameters:fbBody.toString()
+				headers:fbHdr
+				connection:"your_connection"
+			];
+			fbCode = "";
+			if(fbPut != null && fbPut.get("data") != null)
+			{
+				fbCode = ifnull(fbPut.get("data").get(0).get("code"),"");
+			}
+			if(fbPut != null && fbPut.get("code") != null)
+			{
+				fbCode = fbPut.get("code");
+			}
+			logMap7 = Map();
+			logMap7.put("Lead",leadId);
+			logMap7.put("Pool",poolId);
+			logMap7.put("Pool_Key",poolKey);
+			logMap7.put("Source",source);
+			logMap7.put("Operation_Id",opId);
+			logMap7.put("Executed_At",nowIso);
+			logMap7.put("Members_Snapshot",snapshot);
+			if(fbCode == "SUCCESS")
+			{
+				logMap7.put("Result","Fallback");
+				logMap7.put("Assigned_User_Id",fallbackUser);
+				zoho.crm.createRecord(modLogs,logMap7);
+				return "FALLBACK";
+			}
+			logMap7.put("Result","Failed_FallbackUpdate");
+			logMap7.put("Error_Message","fallback put code=" + fbCode);
+			zoho.crm.createRecord(modLogs,logMap7);
+			return "FAILED_FALLBACK_UPDATE";
+		}
+		unRow = Map();
+		unRow.put("RR_Assignment_Status","Unassigned");
+		unRow.put("RR_Operation_Id",opId);
+		unRows = List();
+		unRows.add(unRow);
+		unBody = Map();
+		unBody.put("data",unRows);
+		unBody.put("trigger",List());
+		unHdr = Map();
+		unHdr.put("If-Unmodified-Since",leadMod);
+		invokeurl
+		[
+			url :api + "/Leads/" + leadId
+			type :PUT
+			parameters:unBody.toString()
+			headers:unHdr
+			connection:"your_connection"
+		];
+		logMap8 = Map();
+		logMap8.put("Lead",leadId);
+		logMap8.put("Pool",poolId);
+		logMap8.put("Pool_Key",poolKey);
+		logMap8.put("Result","Unassigned_NoEligible");
+		logMap8.put("Source",source);
+		logMap8.put("Operation_Id",opId);
+		logMap8.put("Executed_At",nowIso);
+		logMap8.put("Members_Snapshot",snapshot);
+		zoho.crm.createRecord(modLogs,logMap8);
+		return "UNASSIGNED_NO_ELIGIBLE";
+	}
+	// 11. Assign owner and verify by read-back
+	asRow = Map();
+	asOwner = Map();
+	asOwner.put("id",candUser);
+	asRow.put("Owner",asOwner);
+	asRow.put("RR_Assignment_Status","Assigned");
+	asRow.put("RR_Pool_Key",poolKey);
+	asRow.put("RR_Last_Assigned_At",nowIso);
+	asRow.put("RR_Operation_Id",opId);
+	asRows = List();
+	asRows.add(asRow);
+	asBody = Map();
+	asBody.put("data",asRows);
+	asBody.put("trigger",List());
+	asHdr = Map();
+	asHdr.put("If-Unmodified-Since",leadMod);
+	asPut = invokeurl
+	[
+		url :api + "/Leads/" + leadId
+		type :PUT
+		parameters:asBody.toString()
+		headers:asHdr
+		connection:"your_connection"
+	];
+	asCode = "";
+	if(asPut != null && asPut.get("data") != null)
+	{
+		asCode = ifnull(asPut.get("data").get(0).get("code"),"");
+	}
+	if(asPut != null && asPut.get("code") != null)
+	{
+		asCode = asPut.get("code");
+	}
+	verified = false;
+	verifyNote = "";
+	if(asCode == "SUCCESS")
+	{
+		chkResp = invokeurl
+		[
+			url :api + "/Leads/" + leadId
+			type :GET
+			connection:"your_connection"
+		];
+		if(chkResp != null && chkResp.get("data") != null)
+		{
+			chk = chkResp.get("data").get(0);
+			chkOwner = "";
+			if(chk.get("Owner") != null)
+			{
+				chkOwner = chk.get("Owner").get("id").toString();
+			}
+			if(chkOwner == candUser && ifnull(chk.get("RR_Assignment_Status"),"") == "Assigned")
+			{
+				verified = true;
+			}
+			else
+			{
+				verifyNote = "readback owner=" + chkOwner + " status=" + ifnull(chk.get("RR_Assignment_Status"),"");
+			}
+		}
+	}
+	else
+	{
+		verifyNote = "owner put code=" + asCode;
+	}
+	logMap9 = Map();
+	logMap9.put("Lead",leadId);
+	logMap9.put("Pool",poolId);
+	logMap9.put("Pool_Key",poolKey);
+	logMap9.put("Source",source);
+	logMap9.put("Operation_Id",opId);
+	logMap9.put("Executed_At",nowIso);
+	logMap9.put("Members_Snapshot",snapshot);
+	logMap9.put("Sequence_Used",candSeq);
+	logMap9.put("Today_Count",ifnull(counts.get(candUser),0).toLong());
+	if(verified)
+	{
+		// Best-effort assigned counter
+		cntRow = Map();
+		cntRow.put("Total_Assigned",totalAssigned + 1);
+		cntRows = List();
+		cntRows.add(cntRow);
+		cntBody = Map();
+		cntBody.put("data",cntRows);
+		cntBody.put("trigger",List());
+		cntHdr = Map();
+		cntHdr.put("If-Unmodified-Since",stateMod);
+		invokeurl
+		[
+			url :api + "/" + modState + "/" + stateId
+			type :PUT
+			parameters:cntBody.toString()
+			headers:cntHdr
+			connection:"your_connection"
+		];
+		logMap9.put("Result","Assigned");
+		logMap9.put("Assigned_User_Id",candUser);
+		zoho.crm.createRecord(modLogs,logMap9);
+		info "ENGINE assigned seq=" + candSeq.toString() + " user=" + candUser;
+		return "ASSIGNED";
+	}
+	logMap9.put("Result","Failed_OwnerUpdate");
+	logMap9.put("Assigned_User_Id",candUser);
+	logMap9.put("Error_Message",verifyNote);
+	zoho.crm.createRecord(modLogs,logMap9);
+	return "FAILED_OWNER_UPDATE";
+}

@@ -1,0 +1,101 @@
+// Sanitized copy for publication: connection name, API data-center domain
+// and user/record IDs in the original were replaced with placeholders.
+// See README.md (Configuration) before use.
+// RR Setup Stage 2b (standalone, no arguments)
+// Creates the 6 fields that failed in stage 2 (lookups need
+// lookup.display_label; textareas need a textarea sub-object),
+// then reads back the affected modules.
+info "SETUP2B_START";
+// RR_Members.Pool
+fld = Map();
+fld.put("field_label","Pool");
+fld.put("data_type","lookup");
+lkM = Map();
+lkM.put("api_name","RR_Pools");
+lk = Map();
+lk.put("module",lkM);
+lk.put("display_label","RR Pool Name");
+fld.put("lookup",lk);
+fl1 = List();
+fl1.add(fld);
+b1 = Map();
+b1.put("fields",fl1);
+r1 = invokeurl
+[
+	url :"https://www.zohoapis.com/crm/v8/settings/fields?module=RR_Members"
+	type :POST
+	parameters:b1.toString()
+	connection:"your_connection"
+];
+info "FIX|RR_Members.Pool|" + r1.toString();
+// RR_State.Pool
+fl2 = List();
+fl2.add(fld);
+b2 = Map();
+b2.put("fields",fl2);
+r2 = invokeurl
+[
+	url :"https://www.zohoapis.com/crm/v8/settings/fields?module=RR_State"
+	type :POST
+	parameters:b2.toString()
+	connection:"your_connection"
+];
+info "FIX|RR_State.Pool|" + r2.toString();
+// RR_Assignment_Logs: Lead lookup, Pool lookup, 2 textareas
+lf = List();
+fLead = Map();
+fLead.put("field_label","Lead");
+fLead.put("data_type","lookup");
+lkM2 = Map();
+lkM2.put("api_name","Leads");
+lk2 = Map();
+lk2.put("module",lkM2);
+lk2.put("display_label","Last Name");
+fLead.put("lookup",lk2);
+lf.add(fLead);
+lf.add(fld);
+fSnap = Map();
+fSnap.put("field_label","Members_Snapshot");
+fSnap.put("data_type","textarea");
+ta = Map();
+ta.put("type","small");
+fSnap.put("textarea",ta);
+lf.add(fSnap);
+fErr = Map();
+fErr.put("field_label","Error_Message");
+fErr.put("data_type","textarea");
+fErr.put("textarea",ta);
+lf.add(fErr);
+b3 = Map();
+b3.put("fields",lf);
+r3 = invokeurl
+[
+	url :"https://www.zohoapis.com/crm/v8/settings/fields?module=RR_Assignment_Logs"
+	type :POST
+	parameters:b3.toString()
+	connection:"your_connection"
+];
+info "FIX|RR_Assignment_Logs|" + r3.toString();
+// Read back the three modules (custom fields only)
+for each modName in {"RR_Members","RR_State","RR_Assignment_Logs"}
+{
+	rb = invokeurl
+	[
+		url :"https://www.zohoapis.com/crm/v8/settings/fields?module=" + modName
+		type :GET
+		connection:"your_connection"
+	];
+	if(rb != null && rb.get("fields") != null)
+	{
+		for each fx in rb.get("fields")
+		{
+			apiN = fx.get("api_name").toString();
+			if(!apiN.endsWith("__s") && apiN != "id")
+			{
+				info "F2B|" + modName + "|" + apiN + "|" + fx.get("data_type");
+			}
+		}
+	}
+}
+info "SETUP2B_END";
+return "done";

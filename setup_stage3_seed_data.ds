@@ -1,0 +1,79 @@
+// Sanitized copy for publication: connection name, API data-center domain
+// and user/record IDs in the original were replaced with placeholders.
+// See README.md (Configuration) before use.
+// RR Setup Stage 3 (standalone, no arguments)
+// Seeds pools, members and state rows. All members point to the
+// org's only real user (YOUR_USER_ID) so rotation is verified
+// through Sequence_Used and the state pointer, not owner changes.
+info "SETUP3_START";
+selfId = "YOUR_USER_ID";
+allDays = {"Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"};
+// Pools
+kanto = Map();
+kanto.put("Name","Kanto Pool");
+kanto.put("Pool_Key","kanto");
+kanto.put("Match_Field_API_Name","RR_Territory");
+kanto.put("Match_Value","Kanto");
+kanto.put("Priority",10);
+kanto.put("Timezone","Asia/Tokyo");
+kanto.put("Fallback_User_Id",selfId);
+kanto.put("Is_Default",false);
+kanto.put("Active",true);
+kantoRes = zoho.crm.createRecord("RR_Pools",kanto);
+kantoId = kantoRes.get("id").toString();
+info "POOL|kanto|" + kantoId;
+defp = Map();
+defp.put("Name","Default Pool");
+defp.put("Pool_Key","default");
+defp.put("Priority",100);
+defp.put("Timezone","Asia/Tokyo");
+defp.put("Fallback_User_Id",selfId);
+defp.put("Is_Default",true);
+defp.put("Active",true);
+defRes = zoho.crm.createRecord("RR_Pools",defp);
+defId = defRes.get("id").toString();
+info "POOL|default|" + defId;
+// Members for kanto: sequences 1..3, same real user
+for each seq in {1,2,3}
+{
+	mem = Map();
+	mem.put("Name","Kanto Member " + seq.toString());
+	mem.put("Pool",kantoId);
+	mem.put("User_Id",selfId);
+	mem.put("Sequence",seq);
+	mem.put("Active",true);
+	mem.put("Accepting_New",true);
+	mem.put("Work_Days",allDays);
+	memRes = zoho.crm.createRecord("RR_Members",mem);
+	info "MEMBER|kanto|" + seq.toString() + "|" + memRes.get("id").toString();
+}
+// Member for default pool
+dmem = Map();
+dmem.put("Name","Default Member 1");
+dmem.put("Pool",defId);
+dmem.put("User_Id",selfId);
+dmem.put("Sequence",1);
+dmem.put("Active",true);
+dmem.put("Accepting_New",true);
+dmem.put("Work_Days",allDays);
+dmemRes = zoho.crm.createRecord("RR_Members",dmem);
+info "MEMBER|default|1|" + dmemRes.get("id").toString();
+// State rows
+st1 = Map();
+st1.put("Name","State - kanto");
+st1.put("Pool",kantoId);
+st1.put("Last_Sequence",0);
+st1.put("Total_Claimed",0);
+st1.put("Total_Assigned",0);
+st1Res = zoho.crm.createRecord("RR_State",st1);
+info "STATE|kanto|" + st1Res.get("id").toString();
+st2 = Map();
+st2.put("Name","State - default");
+st2.put("Pool",defId);
+st2.put("Last_Sequence",0);
+st2.put("Total_Claimed",0);
+st2.put("Total_Assigned",0);
+st2Res = zoho.crm.createRecord("RR_State",st2);
+info "STATE|default|" + st2Res.get("id").toString();
+info "SETUP3_END";
+return "done";

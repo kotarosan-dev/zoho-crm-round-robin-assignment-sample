@@ -1,0 +1,107 @@
+// Sanitized copy for publication: connection name, API data-center domain
+// and user/record IDs in the original were replaced with placeholders.
+// See README.md (Configuration) before use.
+// RR Test Extra (standalone, argument: scenario)
+// S_NOFB: fallback unset + all members capped -> Unassigned_NoEligible (TC-08)
+// S_DELMEM: delete a member row, rotation continues with the rest (TC-10)
+string standalone.rr_test_extra(String scenario)
+{
+	api = "https://www.zohoapis.com/crm/v8";
+	selfId = "YOUR_USER_ID";
+	allDays = {"Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"};
+	pq = Map();
+	pq.put("select_query","select id, Fallback_User_Id from RR_Pools where Pool_Key = 'kanto'");
+	pr = invokeurl
+	[
+		url :api + "/coql"
+		type :POST
+		parameters:pq.toString()
+		connection:"your_connection"
+	];
+	kantoPoolId = pr.get("data").get(0).get("id").toString();
+	savedFallback = pr.get("data").get(0).get("Fallback_User_Id").toString();
+	mq = Map();
+	mq.put("select_query","select id, Sequence from RR_Members where Pool = '" + kantoPoolId + "' order by Sequence asc limit 51");
+	mr = invokeurl
+	[
+		url :api + "/coql"
+		type :POST
+		parameters:mq.toString()
+		connection:"your_connection"
+	];
+	memberRows = mr.get("data");
+	info "EXTRA scenario=" + scenario;
+	if(scenario == "S_NOFB")
+	{
+		for each mrow in memberRows
+		{
+			cupd = Map();
+			cupd.put("Daily_Cap",1);
+			zoho.crm.updateRecord("RR_Members",mrow.get("id").toString().toLong(),cupd);
+		}
+		pupd = Map();
+		pupd.put("Fallback_User_Id","");
+		zoho.crm.updateRecord("RR_Pools",kantoPoolId.toLong(),pupd);
+		lead = Map();
+		lead.put("Last_Name","RR-TC-NOFB");
+		lead.put("Company","RR Test");
+		lead.put("RR_Territory","Kanto");
+		created = zoho.crm.createRecord("Leads",lead);
+		leadId = created.get("id").toString();
+		res = standalone.rr_engine(leadId,"Create_Workflow");
+		info "S_NOFB result=" + res + " lead=" + leadId;
+		pupd2 = Map();
+		pupd2.put("Fallback_User_Id",savedFallback);
+		zoho.crm.updateRecord("RR_Pools",kantoPoolId.toLong(),pupd2);
+		for each mrow2 in memberRows
+		{
+			cupd2 = Map();
+			cupd2.put("Daily_Cap",999);
+			zoho.crm.updateRecord("RR_Members",mrow2.get("id").toString().toLong(),cupd2);
+		}
+		return "S_NOFB done " + res;
+	}
+	if(scenario == "S_DELMEM")
+	{
+		delId = "";
+		for each mrow3 in memberRows
+		{
+			if(mrow3.get("Sequence").toLong() == 2)
+			{
+				delId = mrow3.get("id").toString();
+			}
+		}
+		delResp = invokeurl
+		[
+			url :api + "/RR_Members/" + delId.toLong()
+			type :DELETE
+			connection:"your_connection"
+		];
+		info "S_DELMEM deleted member seq=2 id=" + delId;
+		results = List();
+		for each n in {1,2}
+		{
+			lead = Map();
+			lead.put("Last_Name","RR-TC-DELMEM-" + n.toString());
+			lead.put("Company","RR Test");
+			lead.put("RR_Territory","Kanto");
+			created = zoho.crm.createRecord("Leads",lead);
+			leadId = created.get("id").toString();
+			res = standalone.rr_engine(leadId,"Create_Workflow");
+			results.add(n.toString() + ":" + res + ":" + leadId);
+		}
+		info "S_DELMEM results=" + results.toString();
+		mem = Map();
+		mem.put("Name","Kanto Member 2");
+		mem.put("Pool",kantoPoolId);
+		mem.put("User_Id",selfId);
+		mem.put("Sequence",2);
+		mem.put("Active",true);
+		mem.put("Accepting_New",true);
+		mem.put("Work_Days",allDays);
+		memRes = zoho.crm.createRecord("RR_Members",mem);
+		info "S_DELMEM member restored id=" + memRes.get("id").toString();
+		return "S_DELMEM done";
+	}
+	return "UNKNOWN_SCENARIO";
+}

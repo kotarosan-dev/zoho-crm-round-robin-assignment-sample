@@ -1,0 +1,154 @@
+// Sanitized copy for publication: connection name, API data-center domain
+// and user/record IDs in the original were replaced with placeholders.
+// See README.md (Configuration) before use.
+// RR Test Driver 2 (standalone, argument: scenario)
+// Follow-up scenarios: S_DUPSTATE (TC-17 duplicate state row),
+// S_SHIFT_IN and S_SHIFT_EDGE (TC-22 shift boundaries).
+string standalone.rr_test_driver2(String scenario)
+{
+	api = "https://www.zohoapis.com/crm/v8";
+	selfId = "YOUR_USER_ID";
+	allDays = {"Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"};
+	rawNow = zoho.currenttime;
+	y = rawNow.getYear();
+	m = rawNow.getMonth();
+	d = rawNow.getDay();
+	firstMar = (y + "-03-01").toDate();
+	offMar = (8 - firstMar.getDayOfWeek()) % 7;
+	dstStartDay = 1 + offMar + 7;
+	firstNov = (y + "-11-01").toDate();
+	offNov = (8 - firstNov.getDayOfWeek()) % 7;
+	dstEndDay = 1 + offNov;
+	isDst = false;
+	if(m > 3 && m < 11)
+	{
+		isDst = true;
+	}
+	if(m == 3 && d >= dstStartDay)
+	{
+		isDst = true;
+	}
+	if(m == 11 && d < dstEndDay)
+	{
+		isDst = true;
+	}
+	shiftH = 17;
+	if(isDst)
+	{
+		shiftH = 16;
+	}
+	evalNow = rawNow.addHour(shiftH);
+	nowHm = evalNow.toString("HH:mm");
+	plus2Hm = evalNow.addHour(2).toString("HH:mm");
+	minus2Hm = evalNow.addHour(22).toString("HH:mm");
+	info "DRIVER2 scenario=" + scenario + " nowHm=" + nowHm;
+	pq = Map();
+	pq.put("select_query","select id from RR_Pools where Pool_Key = 'kanto'");
+	pr = invokeurl
+	[
+		url :api + "/coql"
+		type :POST
+		parameters:pq.toString()
+		connection:"your_connection"
+	];
+	kantoPoolId = pr.get("data").get(0).get("id").toString();
+	mq = Map();
+	mq.put("select_query","select id, Sequence from RR_Members where Pool = '" + kantoPoolId + "' order by Sequence asc limit 51");
+	mr = invokeurl
+	[
+		url :api + "/coql"
+		type :POST
+		parameters:mq.toString()
+		connection:"your_connection"
+	];
+	memberRows = mr.get("data");
+	sq = Map();
+	sq.put("select_query","select id, Last_Sequence from RR_State where Pool = '" + kantoPoolId + "' limit 5");
+	sr = invokeurl
+	[
+		url :api + "/coql"
+		type :POST
+		parameters:sq.toString()
+		connection:"your_connection"
+	];
+	lastSeq = sr.get("data").get(0).get("Last_Sequence").toLong();
+	nextRow = memberRows.get(0);
+	for each mrow in memberRows
+	{
+		if(mrow.get("Sequence").toLong() > lastSeq)
+		{
+			nextRow = mrow;
+			break;
+		}
+	}
+	nextId = nextRow.get("id").toString();
+	nextSeq = nextRow.get("Sequence").toLong();
+	info "DRIVER2 lastSeq=" + lastSeq.toString() + " nextSeq=" + nextSeq.toString();
+	if(scenario == "S_DUPSTATE")
+	{
+		st = Map();
+		st.put("Name","State - kanto DUP");
+		st.put("Pool",kantoPoolId);
+		st.put("Last_Sequence",0);
+		st.put("Total_Claimed",0);
+		st.put("Total_Assigned",0);
+		stRes = zoho.crm.createRecord("RR_State",st);
+		stId = stRes.get("id").toString();
+		lead = Map();
+		lead.put("Last_Name","RR-TC-DUPSTATE");
+		lead.put("Company","RR Test");
+		lead.put("RR_Territory","Kanto");
+		created = zoho.crm.createRecord("Leads",lead);
+		leadId = created.get("id").toString();
+		res = standalone.rr_engine(leadId,"Create_Workflow");
+		info "S_DUPSTATE result=" + res + " lead=" + leadId;
+		delResp = invokeurl
+		[
+			url :api + "/RR_State/" + stId.toLong()
+			type :DELETE
+			connection:"your_connection"
+		];
+		return "S_DUPSTATE done " + res;
+	}
+	if(scenario == "S_SHIFT_IN")
+	{
+		upd = Map();
+		upd.put("Shift_Start",nowHm);
+		upd.put("Shift_End",plus2Hm);
+		zoho.crm.updateRecord("RR_Members",nextId.toLong(),upd);
+		lead = Map();
+		lead.put("Last_Name","RR-TC-SHIFTIN");
+		lead.put("Company","RR Test");
+		lead.put("RR_Territory","Kanto");
+		created = zoho.crm.createRecord("Leads",lead);
+		leadId = created.get("id").toString();
+		res = standalone.rr_engine(leadId,"Create_Workflow");
+		info "S_SHIFT_IN result=" + res + " lead=" + leadId + " expectedSeq=" + nextSeq.toString();
+		upd2 = Map();
+		upd2.put("Shift_Start","00:00");
+		upd2.put("Shift_End","23:59");
+		zoho.crm.updateRecord("RR_Members",nextId.toLong(),upd2);
+		return "S_SHIFT_IN done " + res;
+	}
+	if(scenario == "S_SHIFT_EDGE")
+	{
+		upd = Map();
+		upd.put("Shift_Start",minus2Hm);
+		upd.put("Shift_End",nowHm);
+		zoho.crm.updateRecord("RR_Members",nextId.toLong(),upd);
+		lead = Map();
+		lead.put("Last_Name","RR-TC-SHIFTEDGE");
+		lead.put("Company","RR Test");
+		lead.put("RR_Territory","Kanto");
+		created = zoho.crm.createRecord("Leads",lead);
+		leadId = created.get("id").toString();
+		res = standalone.rr_engine(leadId,"Create_Workflow");
+		info "S_SHIFT_EDGE result=" + res + " lead=" + leadId + " skippedSeq=" + nextSeq.toString();
+		upd2 = Map();
+		upd2.put("Shift_Start","00:00");
+		upd2.put("Shift_End","23:59");
+		zoho.crm.updateRecord("RR_Members",nextId.toLong(),upd2);
+		return "S_SHIFT_EDGE done " + res;
+	}
+	return "UNKNOWN_SCENARIO";
+}

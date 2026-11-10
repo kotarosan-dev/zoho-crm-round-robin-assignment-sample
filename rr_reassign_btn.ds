@@ -1,0 +1,67 @@
+// Sanitized copy for publication: connection name, API data-center domain
+// and user/record IDs in the original were replaced with placeholders.
+// See README.md (Configuration) before use.
+// RR reassign button wrapper (Button function for a Leads
+// detail-page button, argument: String leadId, returns String).
+// 5 minute debounce: if the lead was assigned less than 5 minutes
+// ago, the engine is not called.
+string button.rr_reassign_btn(String leadId)
+{
+	resp = invokeurl
+	[
+		url :"https://www.zohoapis.com/crm/v8/Leads/" + leadId
+		type :GET
+		connection:"your_connection"
+	];
+	if(resp == null || resp.get("data") == null)
+	{
+		return "Lead not found.";
+	}
+	lead = resp.get("data").get(0);
+	status = ifnull(lead.get("RR_Assignment_Status"),"");
+	lastAt = ifnull(lead.get("RR_Last_Assigned_At"),"");
+	if((status == "Assigned" || status == "Fallback") && lastAt != "")
+	{
+		// Corrected now (zoho.currenttime is a US Pacific wall clock,
+		// measured JST minus 17h on 2026-11-09; DST aware shift).
+		rawNow = zoho.currenttime;
+		y = rawNow.getYear();
+		m = rawNow.getMonth();
+		d = rawNow.getDay();
+		firstMar = (y + "-03-01").toDate();
+		offMar = (8 - firstMar.getDayOfWeek()) % 7;
+		dstStartDay = 1 + offMar + 7;
+		firstNov = (y + "-11-01").toDate();
+		offNov = (8 - firstNov.getDayOfWeek()) % 7;
+		dstEndDay = 1 + offNov;
+		isDst = false;
+		if(m > 3 && m < 11)
+		{
+			isDst = true;
+		}
+		if(m == 3 && d >= dstStartDay)
+		{
+			isDst = true;
+		}
+		if(m == 11 && d < dstEndDay)
+		{
+			isDst = true;
+		}
+		shiftH = 17;
+		if(isDst)
+		{
+			shiftH = 16;
+		}
+		evalNow = rawNow.addHour(shiftH);
+		lastWall = lastAt.replaceAll("T"," ").replaceAll("\+09:00","");
+		lastDt = lastWall.toDateTime("yyyy-MM-dd HH:mm:ss");
+		diffMin = (evalNow.toLong() - lastDt.toLong()) / 60000;
+		info "debounce check diffMin=" + diffMin.toString();
+		if(diffMin < 5)
+		{
+			return "Skipped: this lead was assigned less than 5 minutes ago.";
+		}
+	}
+	res = standalone.rr_engine(leadId,"Button_Reassign");
+	return "Round robin result: " + res;
+}

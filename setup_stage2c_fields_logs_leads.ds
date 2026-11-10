@@ -1,0 +1,52 @@
+// Sanitized copy for publication: connection name, API data-center domain
+// and user/record IDs in the original were replaced with placeholders.
+// See README.md (Configuration) before use.
+// RR Setup Stage 2c (standalone, no arguments)
+// The two remaining Pool lookups failed with DUPLICATE_DATA
+// "Duplicate related list name": each lookup into RR_Pools needs a
+// distinct display_label. Retry with distinct labels.
+info "SETUP2C_START";
+// RR_State.Pool
+fld = Map();
+fld.put("field_label","Pool");
+fld.put("data_type","lookup");
+lkM = Map();
+lkM.put("api_name","RR_Pools");
+lk = Map();
+lk.put("module",lkM);
+lk.put("display_label","RR Pool Name (State)");
+fld.put("lookup",lk);
+fl1 = List();
+fl1.add(fld);
+b1 = Map();
+b1.put("fields",fl1);
+r1 = invokeurl
+[
+	url :"https://www.zohoapis.com/crm/v8/settings/fields?module=RR_State"
+	type :POST
+	parameters:b1.toString()
+	connection:"your_connection"
+];
+info "FIX2|RR_State.Pool|" + r1.toString();
+// RR_Assignment_Logs.Pool
+fld2 = Map();
+fld2.put("field_label","Pool");
+fld2.put("data_type","lookup");
+lk2 = Map();
+lk2.put("module",lkM);
+lk2.put("display_label","RR Pool Name (Logs)");
+fld2.put("lookup",lk2);
+fl2 = List();
+fl2.add(fld2);
+b2 = Map();
+b2.put("fields",fl2);
+r2 = invokeurl
+[
+	url :"https://www.zohoapis.com/crm/v8/settings/fields?module=RR_Assignment_Logs"
+	type :POST
+	parameters:b2.toString()
+	connection:"your_connection"
+];
+info "FIX2|RR_Assignment_Logs.Pool|" + r2.toString();
+info "SETUP2C_END";
+return "done";

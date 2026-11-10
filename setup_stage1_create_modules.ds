@@ -1,0 +1,114 @@
+// Sanitized copy for publication: connection name, API data-center domain
+// and user/record IDs in the original were replaced with placeholders.
+// See README.md (Configuration) before use.
+// RR Setup Stage 1 (standalone, no arguments)
+// Learns field type strings from existing modules, then creates the
+// four RR custom modules and reports their real API names.
+info "SETUP1_START";
+// Learn field metadata from Invite Logs (CustomModule15)
+f15 = invokeurl
+[
+	url :"https://www.zohoapis.com/crm/v8/settings/fields?module=CustomModule15"
+	type :GET
+	connection:"your_connection"
+];
+for each fld in f15.get("fields")
+{
+	info "F15|" + fld.get("api_name") + "|" + fld.get("data_type") + "|" + fld.get("field_label");
+}
+// Learn data_type strings from Leads for picklist / number / datetime
+fl = invokeurl
+[
+	url :"https://www.zohoapis.com/crm/v8/settings/fields?module=Leads"
+	type :GET
+	connection:"your_connection"
+];
+for each fld2 in fl.get("fields")
+{
+	info "FL|" + fld2.get("api_name") + "|" + fld2.get("data_type");
+}
+// Module definitions: label plural, singular, display field label, display type
+defs = List();
+d1 = Map();
+d1.put("plural","RR Pools");
+d1.put("singular","RR Pool");
+d1.put("api","RR_Pools");
+d1.put("disp_label","Pool Name");
+d1.put("disp_type","text");
+defs.add(d1);
+d2 = Map();
+d2.put("plural","RR Members");
+d2.put("singular","RR Member");
+d2.put("api","RR_Members");
+d2.put("disp_label","Member Name");
+d2.put("disp_type","text");
+defs.add(d2);
+d3 = Map();
+d3.put("plural","RR State");
+d3.put("singular","RR State");
+d3.put("api","RR_State");
+d3.put("disp_label","State Name");
+d3.put("disp_type","text");
+defs.add(d3);
+d4 = Map();
+d4.put("plural","RR Assignment Logs");
+d4.put("singular","RR Assignment Log");
+d4.put("api","RR_Assignment_Logs");
+d4.put("disp_label","Log Name");
+d4.put("disp_type","autonumber");
+defs.add(d4);
+for each def in defs
+{
+	profList = List();
+	p1 = Map();
+	p1.put("id","REDACTED_ID");
+	profList.add(p1);
+	p2 = Map();
+	p2.put("id","REDACTED_ID");
+	profList.add(p2);
+	modMap = Map();
+	modMap.put("plural_label",def.get("plural"));
+	modMap.put("singular_label",def.get("singular"));
+	modMap.put("api_name",def.get("api"));
+	modMap.put("profiles",profList);
+	dispMap = Map();
+	dispMap.put("field_label",def.get("disp_label"));
+	dispMap.put("data_type",def.get("disp_type"));
+	if(def.get("disp_type") == "autonumber")
+	{
+		anMap = Map();
+		anMap.put("prefix","RRL-");
+		anMap.put("start_number","1");
+		dispMap.put("auto_number",anMap);
+	}
+	modMap.put("display_field",dispMap);
+	modList = List();
+	modList.add(modMap);
+	reqMap = Map();
+	reqMap.put("modules",modList);
+	resp = invokeurl
+	[
+		url :"https://www.zohoapis.com/crm/v8/settings/modules"
+		type :POST
+		parameters:reqMap.toString()
+		connection:"your_connection"
+	];
+	info "CREATE|" + def.get("api") + "|" + resp.toString();
+}
+// Read back the module list to learn real API names
+mods = invokeurl
+[
+	url :"https://www.zohoapis.com/crm/v8/settings/modules"
+	type :GET
+	connection:"your_connection"
+];
+for each m in mods.get("modules")
+{
+	pl = ifnull(m.get("plural_label"),"");
+	if(pl.startsWith("RR"))
+	{
+		info "MODULE|" + pl + "|" + m.get("api_name") + "|" + m.get("id");
+	}
+}
+info "SETUP1_END";
+return "done";

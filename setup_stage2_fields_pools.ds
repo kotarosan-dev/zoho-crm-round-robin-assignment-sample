@@ -1,0 +1,290 @@
+// Sanitized copy for publication: connection name, API data-center domain
+// and user/record IDs in the original were replaced with placeholders.
+// See README.md (Configuration) before use.
+// RR Setup Stage 2 (standalone, no arguments)
+// Creates all fields for the RR modules and the Leads RR fields,
+// then reads back field metadata for verification.
+info "SETUP2_START";
+// ---- spec: each entry L=label T=type, optional V=picklist values,
+// ---- LK=lookup target module api name, ML=max length, UQ=unique
+specs = Map();
+// RR_Pools
+pf = List();
+f = Map();
+f.put("L","Pool_Key");
+f.put("T","text");
+f.put("ML",50);
+f.put("UQ",true);
+pf.add(f);
+f = Map();
+f.put("L","Match_Field_API_Name");
+f.put("T","text");
+f.put("ML",100);
+pf.add(f);
+f = Map();
+f.put("L","Match_Value");
+f.put("T","text");
+f.put("ML",100);
+pf.add(f);
+f = Map();
+f.put("L","Priority");
+f.put("T","integer");
+pf.add(f);
+f = Map();
+f.put("L","Timezone");
+f.put("T","text");
+f.put("ML",50);
+pf.add(f);
+f = Map();
+f.put("L","Fallback_User_Id");
+f.put("T","text");
+f.put("ML",30);
+pf.add(f);
+f = Map();
+f.put("L","Is_Default");
+f.put("T","boolean");
+pf.add(f);
+f = Map();
+f.put("L","Active");
+f.put("T","boolean");
+pf.add(f);
+specs.put("RR_Pools",pf);
+// RR_Members
+mf = List();
+f = Map();
+f.put("L","Pool");
+f.put("T","lookup");
+f.put("LK","RR_Pools");
+mf.add(f);
+f = Map();
+f.put("L","User_Id");
+f.put("T","userlookup");
+mf.add(f);
+f = Map();
+f.put("L","Sequence");
+f.put("T","integer");
+mf.add(f);
+f = Map();
+f.put("L","Active");
+f.put("T","boolean");
+mf.add(f);
+f = Map();
+f.put("L","Accepting_New");
+f.put("T","boolean");
+mf.add(f);
+f = Map();
+f.put("L","Work_Days");
+f.put("T","multiselectpicklist");
+f.put("V",{"Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"});
+mf.add(f);
+f = Map();
+f.put("L","Shift_Start");
+f.put("T","text");
+f.put("ML",5);
+mf.add(f);
+f = Map();
+f.put("L","Shift_End");
+f.put("T","text");
+f.put("ML",5);
+mf.add(f);
+f = Map();
+f.put("L","Absence_From");
+f.put("T","date");
+mf.add(f);
+f = Map();
+f.put("L","Absence_To");
+f.put("T","date");
+mf.add(f);
+f = Map();
+f.put("L","Daily_Cap");
+f.put("T","integer");
+mf.add(f);
+specs.put("RR_Members",mf);
+// RR_State
+sf = List();
+f = Map();
+f.put("L","Pool");
+f.put("T","lookup");
+f.put("LK","RR_Pools");
+sf.add(f);
+f = Map();
+f.put("L","Last_Sequence");
+f.put("T","integer");
+sf.add(f);
+f = Map();
+f.put("L","Last_Assigned_User_Id");
+f.put("T","text");
+f.put("ML",30);
+sf.add(f);
+f = Map();
+f.put("L","Last_Assigned_At");
+f.put("T","datetime");
+sf.add(f);
+f = Map();
+f.put("L","Total_Claimed");
+f.put("T","integer");
+sf.add(f);
+f = Map();
+f.put("L","Total_Assigned");
+f.put("T","integer");
+sf.add(f);
+specs.put("RR_State",sf);
+// RR_Assignment_Logs
+lf = List();
+f = Map();
+f.put("L","Lead");
+f.put("T","lookup");
+f.put("LK","Leads");
+lf.add(f);
+f = Map();
+f.put("L","Pool");
+f.put("T","lookup");
+f.put("LK","RR_Pools");
+lf.add(f);
+f = Map();
+f.put("L","Pool_Key");
+f.put("T","text");
+f.put("ML",50);
+lf.add(f);
+f = Map();
+f.put("L","Assigned_User_Id");
+f.put("T","userlookup");
+lf.add(f);
+f = Map();
+f.put("L","Result");
+f.put("T","picklist");
+f.put("V",{"Assigned","Fallback","Unassigned_NoPool","Unassigned_NoEligible","Skipped_AlreadyAssigned","Skipped_RecordBusy","Failed_OwnerUpdate","Failed_StateUpdate","Failed_FallbackUpdate","Config_Error"});
+lf.add(f);
+f = Map();
+f.put("L","Source");
+f.put("T","picklist");
+f.put("V",{"Create_Workflow","Button_Reassign"});
+lf.add(f);
+f = Map();
+f.put("L","Sequence_Used");
+f.put("T","integer");
+lf.add(f);
+f = Map();
+f.put("L","Today_Count");
+f.put("T","integer");
+lf.add(f);
+f = Map();
+f.put("L","Members_Snapshot");
+f.put("T","textarea");
+lf.add(f);
+f = Map();
+f.put("L","Error_Message");
+f.put("T","textarea");
+lf.add(f);
+f = Map();
+f.put("L","Operation_Id");
+f.put("T","text");
+f.put("ML",100);
+lf.add(f);
+f = Map();
+f.put("L","Executed_At");
+f.put("T","datetime");
+lf.add(f);
+specs.put("RR_Assignment_Logs",lf);
+// Leads
+df = List();
+f = Map();
+f.put("L","RR_Territory");
+f.put("T","picklist");
+f.put("V",{"Kanto","Kansai","Remote"});
+df.add(f);
+f = Map();
+f.put("L","RR_Assignment_Status");
+f.put("T","picklist");
+f.put("V",{"Unassigned","Processing","Assigned","Fallback","Failed","Config_Error"});
+df.add(f);
+f = Map();
+f.put("L","RR_Pool_Key");
+f.put("T","text");
+f.put("ML",50);
+df.add(f);
+f = Map();
+f.put("L","RR_Last_Assigned_At");
+f.put("T","datetime");
+df.add(f);
+f = Map();
+f.put("L","RR_Operation_Id");
+f.put("T","text");
+f.put("ML",100);
+df.add(f);
+specs.put("Leads",df);
+// ---- create fields per module
+for each modName in specs.keys()
+{
+	fieldList = List();
+	for each fs in specs.get(modName)
+	{
+		fm = Map();
+		fm.put("field_label",fs.get("L"));
+		fm.put("data_type",fs.get("T"));
+		if(fs.get("T") == "text")
+		{
+			fm.put("length",ifnull(fs.get("ML"),255));
+		}
+		if(fs.get("V") != null)
+		{
+			pvList = List();
+			for each v in fs.get("V")
+			{
+				pv = Map();
+				pv.put("display_value",v);
+				pv.put("actual_value",v);
+				pvList.add(pv);
+			}
+			fm.put("pick_list_values",pvList);
+		}
+		if(fs.get("LK") != null)
+		{
+			lkMod = Map();
+			lkMod.put("api_name",fs.get("LK"));
+			lk = Map();
+			lk.put("module",lkMod);
+			fm.put("lookup",lk);
+		}
+		if(ifnull(fs.get("UQ"),false) == true)
+		{
+			uq = Map();
+			uq.put("casesensitive",false);
+			fm.put("unique",uq);
+		}
+		fieldList.add(fm);
+	}
+	body = Map();
+	body.put("fields",fieldList);
+	resp = invokeurl
+	[
+		url :"https://www.zohoapis.com/crm/v8/settings/fields?module=" + modName
+		type :POST
+		parameters:body.toString()
+		connection:"your_connection"
+	];
+	info "FIELDS_CREATE|" + modName + "|" + resp.toString();
+}
+// ---- read back
+for each modName2 in specs.keys()
+{
+	rb = invokeurl
+	[
+		url :"https://www.zohoapis.com/crm/v8/settings/fields?module=" + modName2
+		type :GET
+		connection:"your_connection"
+	];
+	if(rb != null && rb.get("fields") != null)
+	{
+		for each fld in rb.get("fields")
+		{
+			info "F2|" + modName2 + "|" + fld.get("api_name") + "|" + fld.get("data_type") + "|" + fld.get("field_label");
+		}
+	}
+	else
+	{
+		info "F2|" + modName2 + "|READBACK_FAILED|" + ifnull(rb,"null").toString();
+	}
+}
+info "SETUP2_END";
+return "done";

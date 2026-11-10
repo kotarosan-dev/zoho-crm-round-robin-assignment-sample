@@ -1,0 +1,475 @@
+// Sanitized copy for publication: connection name, API data-center domain
+// and user/record IDs in the original were replaced with placeholders.
+// See README.md (Configuration) before use.
+// RR Test Driver (standalone, argument: scenario)
+// Drives engine test scenarios without the workflow path: leads are
+// created with zoho.crm.createRecord (Deluge built-in create does
+// not fire workflows), then standalone.rr_engine is called directly.
+// Member setting changes are restored inside each scenario.
+string standalone.rr_test_driver(String scenario)
+{
+	api = "https://www.zohoapis.com/crm/v8";
+	selfId = "YOUR_USER_ID";
+	allDays = {"Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"};
+	// Corrected now and weekday (same rule as the engine)
+	rawNow = zoho.currenttime;
+	y = rawNow.getYear();
+	m = rawNow.getMonth();
+	d = rawNow.getDay();
+	firstMar = (y + "-03-01").toDate();
+	offMar = (8 - firstMar.getDayOfWeek()) % 7;
+	dstStartDay = 1 + offMar + 7;
+	firstNov = (y + "-11-01").toDate();
+	offNov = (8 - firstNov.getDayOfWeek()) % 7;
+	dstEndDay = 1 + offNov;
+	isDst = false;
+	if(m > 3 && m < 11)
+	{
+		isDst = true;
+	}
+	if(m == 3 && d >= dstStartDay)
+	{
+		isDst = true;
+	}
+	if(m == 11 && d < dstEndDay)
+	{
+		isDst = true;
+	}
+	shiftH = 17;
+	if(isDst)
+	{
+		shiftH = 16;
+	}
+	evalNow = rawNow.addHour(shiftH);
+	rawDay = evalNow.toString("EEEE");
+	dayEn = "";
+	if(rawDay == "Monday" || rawDay == "月曜日")
+	{
+		dayEn = "Monday";
+	}
+	if(rawDay == "Tuesday" || rawDay == "火曜日")
+	{
+		dayEn = "Tuesday";
+	}
+	if(rawDay == "Wednesday" || rawDay == "水曜日")
+	{
+		dayEn = "Wednesday";
+	}
+	if(rawDay == "Thursday" || rawDay == "木曜日")
+	{
+		dayEn = "Thursday";
+	}
+	if(rawDay == "Friday" || rawDay == "金曜日")
+	{
+		dayEn = "Friday";
+	}
+	if(rawDay == "Saturday" || rawDay == "土曜日")
+	{
+		dayEn = "Saturday";
+	}
+	if(rawDay == "Sunday" || rawDay == "日曜日")
+	{
+		dayEn = "Sunday";
+	}
+	info "DRIVER scenario=" + scenario + " day=" + dayEn;
+	// Kanto pool id
+	pq = Map();
+	pq.put("select_query","select id from RR_Pools where Pool_Key = 'kanto'");
+	pr = invokeurl
+	[
+		url :api + "/coql"
+		type :POST
+		parameters:pq.toString()
+		connection:"your_connection"
+	];
+	kantoPoolId = pr.get("data").get(0).get("id").toString();
+	// Kanto members ordered by sequence
+	mq = Map();
+	mq.put("select_query","select id, Sequence from RR_Members where Pool = '" + kantoPoolId + "' order by Sequence asc limit 51");
+	mr = invokeurl
+	[
+		url :api + "/coql"
+		type :POST
+		parameters:mq.toString()
+		connection:"your_connection"
+	];
+	memberRows = mr.get("data");
+	// Kanto state
+	sq = Map();
+	sq.put("select_query","select id, Last_Sequence from RR_State where Pool = '" + kantoPoolId + "' limit 5");
+	sr = invokeurl
+	[
+		url :api + "/coql"
+		type :POST
+		parameters:sq.toString()
+		connection:"your_connection"
+	];
+	lastSeq = sr.get("data").get(0).get("Last_Sequence").toLong();
+	// Next member in rotation
+	nextRow = memberRows.get(0);
+	for each mrow in memberRows
+	{
+		if(mrow.get("Sequence").toLong() > lastSeq)
+		{
+			nextRow = mrow;
+			break;
+		}
+	}
+	nextId = nextRow.get("id").toString();
+	nextSeq = nextRow.get("Sequence").toLong();
+	info "DRIVER lastSeq=" + lastSeq.toString() + " nextSeq=" + nextSeq.toString();
+	if(scenario == "S_SKIP")
+	{
+		upd = Map();
+		upd.put("Accepting_New",false);
+		zoho.crm.updateRecord("RR_Members",nextId.toLong(),upd);
+		lead = Map();
+		lead.put("Last_Name","RR-TC-SKIP");
+		lead.put("Company","RR Test");
+		lead.put("RR_Territory","Kanto");
+		created = zoho.crm.createRecord("Leads",lead);
+		leadId = created.get("id").toString();
+		res = standalone.rr_engine(leadId,"Create_Workflow");
+		info "S_SKIP result=" + res + " lead=" + leadId;
+		upd2 = Map();
+		upd2.put("Accepting_New",true);
+		zoho.crm.updateRecord("RR_Members",nextId.toLong(),upd2);
+		return "S_SKIP done " + res;
+	}
+	if(scenario == "S_INACTIVE")
+	{
+		upd = Map();
+		upd.put("Active",false);
+		zoho.crm.updateRecord("RR_Members",nextId.toLong(),upd);
+		lead = Map();
+		lead.put("Last_Name","RR-TC-INACTIVE");
+		lead.put("Company","RR Test");
+		lead.put("RR_Territory","Kanto");
+		created = zoho.crm.createRecord("Leads",lead);
+		leadId = created.get("id").toString();
+		res = standalone.rr_engine(leadId,"Create_Workflow");
+		info "S_INACTIVE result=" + res + " lead=" + leadId;
+		upd2 = Map();
+		upd2.put("Active",true);
+		zoho.crm.updateRecord("RR_Members",nextId.toLong(),upd2);
+		return "S_INACTIVE done " + res;
+	}
+	if(scenario == "S_ABSENCE")
+	{
+		todayStr = evalNow.toString("yyyy-MM-dd");
+		upd = Map();
+		upd.put("Absence_From",todayStr);
+		upd.put("Absence_To",todayStr);
+		zoho.crm.updateRecord("RR_Members",nextId.toLong(),upd);
+		lead = Map();
+		lead.put("Last_Name","RR-TC-ABSENCE");
+		lead.put("Company","RR Test");
+		lead.put("RR_Territory","Kanto");
+		created = zoho.crm.createRecord("Leads",lead);
+		leadId = created.get("id").toString();
+		res = standalone.rr_engine(leadId,"Create_Workflow");
+		info "S_ABSENCE result=" + res + " lead=" + leadId;
+		upd2 = Map();
+		upd2.put("Absence_From","2020-01-01");
+		upd2.put("Absence_To","2020-01-02");
+		zoho.crm.updateRecord("RR_Members",nextId.toLong(),upd2);
+		return "S_ABSENCE done " + res;
+	}
+	if(scenario == "S_SHIFT")
+	{
+		upd = Map();
+		upd.put("Shift_Start","03:00");
+		upd.put("Shift_End","04:00");
+		zoho.crm.updateRecord("RR_Members",nextId.toLong(),upd);
+		lead = Map();
+		lead.put("Last_Name","RR-TC-SHIFT");
+		lead.put("Company","RR Test");
+		lead.put("RR_Territory","Kanto");
+		created = zoho.crm.createRecord("Leads",lead);
+		leadId = created.get("id").toString();
+		res = standalone.rr_engine(leadId,"Create_Workflow");
+		info "S_SHIFT result=" + res + " lead=" + leadId;
+		upd2 = Map();
+		upd2.put("Shift_Start","00:00");
+		upd2.put("Shift_End","23:59");
+		zoho.crm.updateRecord("RR_Members",nextId.toLong(),upd2);
+		return "S_SHIFT done " + res;
+	}
+	if(scenario == "S_DAYOFF")
+	{
+		otherDays = List();
+		for each dname in allDays
+		{
+			if(dname != dayEn)
+			{
+				otherDays.add(dname);
+			}
+		}
+		upd = Map();
+		upd.put("Work_Days",otherDays);
+		zoho.crm.updateRecord("RR_Members",nextId.toLong(),upd);
+		lead = Map();
+		lead.put("Last_Name","RR-TC-DAYOFF");
+		lead.put("Company","RR Test");
+		lead.put("RR_Territory","Kanto");
+		created = zoho.crm.createRecord("Leads",lead);
+		leadId = created.get("id").toString();
+		res = standalone.rr_engine(leadId,"Create_Workflow");
+		info "S_DAYOFF result=" + res + " lead=" + leadId;
+		upd2 = Map();
+		upd2.put("Work_Days",allDays);
+		zoho.crm.updateRecord("RR_Members",nextId.toLong(),upd2);
+		return "S_DAYOFF done " + res;
+	}
+	if(scenario == "S_CAP")
+	{
+		for each mrow2 in memberRows
+		{
+			cupd = Map();
+			cupd.put("Daily_Cap",1);
+			zoho.crm.updateRecord("RR_Members",mrow2.get("id").toString().toLong(),cupd);
+		}
+		lead = Map();
+		lead.put("Last_Name","RR-TC-CAP");
+		lead.put("Company","RR Test");
+		lead.put("RR_Territory","Kanto");
+		created = zoho.crm.createRecord("Leads",lead);
+		leadId = created.get("id").toString();
+		res = standalone.rr_engine(leadId,"Create_Workflow");
+		info "S_CAP result=" + res + " lead=" + leadId;
+		for each mrow3 in memberRows
+		{
+			cupd2 = Map();
+			cupd2.put("Daily_Cap",999);
+			zoho.crm.updateRecord("RR_Members",mrow3.get("id").toString().toLong(),cupd2);
+		}
+		return "S_CAP done " + res;
+	}
+	if(scenario == "S_DOUBLE")
+	{
+		lead = Map();
+		lead.put("Last_Name","RR-TC-DOUBLE");
+		lead.put("Company","RR Test");
+		lead.put("RR_Territory","Kanto");
+		created = zoho.crm.createRecord("Leads",lead);
+		leadId = created.get("id").toString();
+		res1 = standalone.rr_engine(leadId,"Create_Workflow");
+		res2 = standalone.rr_engine(leadId,"Create_Workflow");
+		info "S_DOUBLE first=" + res1 + " second=" + res2 + " lead=" + leadId;
+		return "S_DOUBLE done";
+	}
+	if(scenario == "S_BURST")
+	{
+		results = List();
+		for each n in {1,2,3,4,5,6}
+		{
+			lead = Map();
+			lead.put("Last_Name","RR-TC-BURST-" + n.toString());
+			lead.put("Company","RR Test");
+			lead.put("RR_Territory","Kanto");
+			created = zoho.crm.createRecord("Leads",lead);
+			leadId = created.get("id").toString();
+			res = standalone.rr_engine(leadId,"Create_Workflow");
+			results.add(n.toString() + ":" + res);
+		}
+		info "S_BURST results=" + results.toString();
+		return "S_BURST done";
+	}
+	if(scenario == "S_NOSTATE")
+	{
+		pool = Map();
+		pool.put("Name","Kansai Test Pool");
+		pool.put("Pool_Key","kansai-test");
+		pool.put("Match_Field_API_Name","RR_Territory");
+		pool.put("Match_Value","Kansai");
+		pool.put("Priority",10);
+		pool.put("Timezone","Asia/Tokyo");
+		pool.put("Is_Default",false);
+		pool.put("Active",true);
+		poolRes = zoho.crm.createRecord("RR_Pools",pool);
+		poolId = poolRes.get("id").toString();
+		mem = Map();
+		mem.put("Name","Kansai Member 1");
+		mem.put("Pool",poolId);
+		mem.put("User_Id",selfId);
+		mem.put("Sequence",1);
+		mem.put("Active",true);
+		mem.put("Accepting_New",true);
+		mem.put("Work_Days",allDays);
+		memRes = zoho.crm.createRecord("RR_Members",mem);
+		memId = memRes.get("id").toString();
+		lead = Map();
+		lead.put("Last_Name","RR-TC-NOSTATE");
+		lead.put("Company","RR Test");
+		lead.put("RR_Territory","Kansai");
+		created = zoho.crm.createRecord("Leads",lead);
+		leadId = created.get("id").toString();
+		res = standalone.rr_engine(leadId,"Create_Workflow");
+		info "S_NOSTATE result=" + res + " lead=" + leadId;
+		delResp = invokeurl
+		[
+			url :api + "/RR_Members/" + memId.toLong()
+			type :DELETE
+			connection:"your_connection"
+		];
+		delResp = invokeurl
+		[
+			url :api + "/RR_Pools/" + poolId.toLong()
+			type :DELETE
+			connection:"your_connection"
+		];
+		return "S_NOSTATE done " + res;
+	}
+	if(scenario == "S_PRIO")
+	{
+		pool = Map();
+		pool.put("Name","Kanto B Pool");
+		pool.put("Pool_Key","kanto-b");
+		pool.put("Match_Field_API_Name","RR_Territory");
+		pool.put("Match_Value","Kanto");
+		pool.put("Priority",5);
+		pool.put("Timezone","Asia/Tokyo");
+		pool.put("Is_Default",false);
+		pool.put("Active",true);
+		poolRes = zoho.crm.createRecord("RR_Pools",pool);
+		poolId = poolRes.get("id").toString();
+		mem = Map();
+		mem.put("Name","Kanto B Member 1");
+		mem.put("Pool",poolId);
+		mem.put("User_Id",selfId);
+		mem.put("Sequence",1);
+		mem.put("Active",true);
+		mem.put("Accepting_New",true);
+		mem.put("Work_Days",allDays);
+		memRes = zoho.crm.createRecord("RR_Members",mem);
+		memId = memRes.get("id").toString();
+		st = Map();
+		st.put("Name","State - kanto-b");
+		st.put("Pool",poolId);
+		st.put("Last_Sequence",0);
+		st.put("Total_Claimed",0);
+		st.put("Total_Assigned",0);
+		stRes = zoho.crm.createRecord("RR_State",st);
+		stId = stRes.get("id").toString();
+		lead = Map();
+		lead.put("Last_Name","RR-TC-PRIO");
+		lead.put("Company","RR Test");
+		lead.put("RR_Territory","Kanto");
+		created = zoho.crm.createRecord("Leads",lead);
+		leadId = created.get("id").toString();
+		res = standalone.rr_engine(leadId,"Create_Workflow");
+		info "S_PRIO result=" + res + " lead=" + leadId;
+		delResp = invokeurl
+		[
+			url :api + "/RR_Members/" + memId.toLong()
+			type :DELETE
+			connection:"your_connection"
+		];
+		delResp = invokeurl
+		[
+			url :api + "/RR_State/" + stId.toLong()
+			type :DELETE
+			connection:"your_connection"
+		];
+		delResp = invokeurl
+		[
+			url :api + "/RR_Pools/" + poolId.toLong()
+			type :DELETE
+			connection:"your_connection"
+		];
+		return "S_PRIO done " + res;
+	}
+	if(scenario == "S_NOPOOL")
+	{
+		dq = Map();
+		dq.put("select_query","select id from RR_Pools where Pool_Key = 'default'");
+		dr = invokeurl
+		[
+			url :api + "/coql"
+			type :POST
+			parameters:dq.toString()
+			connection:"your_connection"
+		];
+		defPoolId = dr.get("data").get(0).get("id").toString();
+		dupd = Map();
+		dupd.put("Active",false);
+		zoho.crm.updateRecord("RR_Pools",defPoolId.toLong(),dupd);
+		lead = Map();
+		lead.put("Last_Name","RR-TC-NOPOOL");
+		lead.put("Company","RR Test");
+		lead.put("RR_Territory","Remote");
+		created = zoho.crm.createRecord("Leads",lead);
+		leadId = created.get("id").toString();
+		res = standalone.rr_engine(leadId,"Create_Workflow");
+		info "S_NOPOOL result=" + res + " lead=" + leadId;
+		dupd2 = Map();
+		dupd2.put("Active",true);
+		zoho.crm.updateRecord("RR_Pools",defPoolId.toLong(),dupd2);
+		return "S_NOPOOL done " + res;
+	}
+	if(scenario == "S_DUPSEQ")
+	{
+		mem = Map();
+		mem.put("Name","Kanto Member Dup");
+		mem.put("Pool",kantoPoolId);
+		mem.put("User_Id",selfId);
+		mem.put("Sequence",2);
+		mem.put("Active",true);
+		mem.put("Accepting_New",true);
+		mem.put("Work_Days",allDays);
+		memRes = zoho.crm.createRecord("RR_Members",mem);
+		memId = memRes.get("id").toString();
+		lead = Map();
+		lead.put("Last_Name","RR-TC-DUPSEQ");
+		lead.put("Company","RR Test");
+		lead.put("RR_Territory","Kanto");
+		created = zoho.crm.createRecord("Leads",lead);
+		leadId = created.get("id").toString();
+		res = standalone.rr_engine(leadId,"Create_Workflow");
+		info "S_DUPSEQ result=" + res + " lead=" + leadId;
+		delResp = invokeurl
+		[
+			url :api + "/RR_Members/" + memId.toLong()
+			type :DELETE
+			connection:"your_connection"
+		];
+		return "S_DUPSEQ done " + res;
+	}
+	if(scenario == "S_INVALID")
+	{
+		mem = Map();
+		mem.put("Name","Kanto Member Invalid");
+		mem.put("Pool",kantoPoolId);
+		mem.put("User_Id","999999999999999999");
+		mem.put("Sequence",9);
+		mem.put("Active",true);
+		mem.put("Accepting_New",true);
+		mem.put("Work_Days",allDays);
+		try
+		{
+			memRes = zoho.crm.createRecord("RR_Members",mem);
+			memId = memRes.get("id").toString();
+			info "S_INVALID member created id=" + memId;
+			lead = Map();
+			lead.put("Last_Name","RR-TC-INVALID");
+			lead.put("Company","RR Test");
+			lead.put("RR_Territory","Kanto");
+			created = zoho.crm.createRecord("Leads",lead);
+			leadId = created.get("id").toString();
+			res = standalone.rr_engine(leadId,"Create_Workflow");
+			info "S_INVALID result=" + res + " lead=" + leadId;
+			delResp = invokeurl
+		[
+			url :api + "/RR_Members/" + memId.toLong()
+			type :DELETE
+			connection:"your_connection"
+		];
+		}
+		catch (e)
+		{
+			info "S_INVALID member create failed (bogus user id rejected)";
+		}
+		return "S_INVALID done";
+	}
+	return "UNKNOWN_SCENARIO";
+}
